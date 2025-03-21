@@ -8,12 +8,12 @@ The system integrates **GORM with MySQL**, employs **concurrent risk analysis**,
 ---
 
 ## **Features**  
-**Behavioral Baseline Analysis:** Tracks user login frequency, device usage, and location patterns.  
-**Real-Time Anomaly Detection:** Identifies phishing attempts based on login behavior, GeoIP, and network heuristics.  
-**Parallel Network Analysis:** Detects VPNs, Tor networks, and malicious IPs using concurrent processing.  
-**Risk Scoring System:** Assigns a **risk score** to each login attempt based on heuristics.  
-**Security Alerts:** Sends **real-time notifications** to Slack and Email for high-risk logins.  
-**Database Transaction Management:** Uses **GORM transactions** to ensure login attempt data integrity.  
+  **Behavioral Baseline Analysis:** Tracks user login frequency, device usage, and location patterns.  
+  **Real-Time Anomaly Detection:** Identifies phishing attempts based on login behavior, GeoIP, and network heuristics.  
+  **Parallel Network Analysis:** Detects VPNs, Tor networks, and malicious IPs using concurrent processing.  
+  **Risk Scoring System:** Assigns a **risk score** to each login attempt based on heuristics.  
+  **Security Alerts:** Sends **real-time notifications** to Slack and Email for high-risk logins.  
+  **Database Transaction Management:** Uses **GORM transactions** to ensure login attempt data integrity.  
 
 ---
 
@@ -41,7 +41,7 @@ The system integrates **GORM with MySQL**, employs **concurrent risk analysis**,
 ## **Installation & Setup**  
 
 ### **Prerequisites**  
-- **Go 1.20+**  
+- **Go 1.23**  
 - **MySQL** (for storing login attempts)  
 
 ### **1️⃣ Clone the Repository**  
@@ -62,8 +62,7 @@ DB_USER=root
 DB_PASS=yourpassword
 DB_HOST=localhost
 DB_NAME=phishing_detection
-SLACK_WEBHOOK_URL=https://hooks.slack.com/your-webhook
-EMAIL_ALERTS_ENABLED=true
+
 ```
 
 ### **4️⃣ Run the Service**  
@@ -75,7 +74,7 @@ go run main.go
 
 ## **Code Documentation**  
 
-### **1️⃣ `DetectPhishing` Function**  
+### ** `DetectPhishing` Function**  
 Handles **real-time phishing detection** by analyzing login behavior and network patterns.  
 
 **Steps:**  
@@ -90,7 +89,7 @@ Handles **real-time phishing detection** by analyzing login behavior and network
 
 ---
 
-### **2️⃣ `CalculateBehavioralBaselines` Function**  
+### ** `CalculateBehavioralBaselines` Function**  
 Analyzes past user logins to establish **normal behavior**.  
 
 **Metrics Computed:**  
@@ -103,7 +102,7 @@ Analyzes past user logins to establish **normal behavior**.
 
 ---
 
-### **3️⃣ `ComputeRiskScore` Function**  
+### ** `ComputeRiskScore` Function**  
 Assigns a **risk score** to a login attempt based on:  
 - **GeoIP distance from last login**  
 - **OTP replay detection**  
@@ -114,7 +113,7 @@ Assigns a **risk score** to a login attempt based on:
 
 ---
 
-### **4️⃣ `PerformNetworkAnalysis` Function**  
+### ** `PerformNetworkAnalysis` Function**  
 Executes **parallel network-based heuristics** to detect:  
 - **High-frequency logins**  
 - **Multiple IPs in a short duration**  
@@ -124,7 +123,7 @@ Executes **parallel network-based heuristics** to detect:
 
 ---
 
-### **5️⃣ `SendSecurityAlerts` Function**  
+### ** `SendSecurityAlerts` Function**  
 Sends **real-time alerts** for high-risk logins via **Slack & Email**.  
 
 
