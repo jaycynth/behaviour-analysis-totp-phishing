@@ -13,7 +13,7 @@ type LoginAttempt struct {
 	DeviceID            string         `gorm:"index" json:"device_id"`
 	Location            string         `json:"location"`
 	UserAgent           string         `json:"user_agent"`
-	OTPCodeHash         string         `json:"-"`
+	OTPCodeHash         string         `json:"otp_code_hash"`
 	Success             bool           `json:"success"`
 	DistanceFromLast    float64        `json:"distance_from_last"`
 	LoginVelocity       float64        `json:"login_velocity"`
@@ -22,6 +22,7 @@ type LoginAttempt struct {
 	OTPReplayDetected   bool           `json:"otp_replay_detected"`
 	LoginFrequencyHigh  bool           `json:"login_frequency_high"`
 	MultipleIPsDetected bool           `json:"multiple_ips_detected"`
+	RiskScore           int            `json:"riskScore"`
 	CreatedAt           time.Time      `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt           time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
 	DeletedAt           gorm.DeletedAt `gorm:"index" json:"-"`
@@ -29,4 +30,21 @@ type LoginAttempt struct {
 
 func (LoginAttempt) TableName() string {
 	return "login_attempts"
+}
+
+type BehavioralStats struct {
+	AverageLoginInterval float64
+	StdDevLoginInterval  float64
+	CommonPatterns       struct {
+		Location string
+		Device   string
+	}
+}
+
+type NetworkAnalysisResult struct {
+	Score        int
+	Alerts       []string
+	IPReputation string
+	IsVPN        bool
+	IsTorNode    bool
 }

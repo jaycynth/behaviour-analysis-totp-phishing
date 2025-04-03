@@ -41,7 +41,6 @@ func InitDB() {
 		log.Fatalf("Failed to get database instance: %v", err)
 	}
 
-	// Set database connection pool settings for scalability
 	sqlDB.SetMaxOpenConns(100)
 	sqlDB.SetMaxIdleConns(10)
 	sqlDB.SetConnMaxLifetime(30 * time.Minute)

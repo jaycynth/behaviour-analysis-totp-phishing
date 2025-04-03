@@ -6,7 +6,7 @@ import (
 )
 
 type DeviceRepository interface {
-	SaveDeviceMetadata(metadata *models.DeviceMetadata) error
+	SaveDeviceMetadata(metadata *models.DeviceMetadata) (*models.DeviceMetadata, error)
 	GetDeviceByID(deviceID string) (*models.DeviceMetadata, error)
 }
 
@@ -18,8 +18,11 @@ func NewDeviceRepository(db *gorm.DB) DeviceRepository {
 	return &DeviceRepositoryImpl{db: db}
 }
 
-func (r *DeviceRepositoryImpl) SaveDeviceMetadata(metadata *models.DeviceMetadata) error {
-	return r.db.Create(metadata).Error
+func (r *DeviceRepositoryImpl) SaveDeviceMetadata(metadata *models.DeviceMetadata) (*models.DeviceMetadata, error) {
+	if err := r.db.Create(metadata).Error; err != nil {
+		return nil, err
+	}
+	return metadata, nil
 }
 
 func (r *DeviceRepositoryImpl) GetDeviceByID(deviceID string) (*models.DeviceMetadata, error) {

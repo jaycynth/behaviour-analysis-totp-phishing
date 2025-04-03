@@ -21,22 +21,28 @@ func NewPhishingService(repo *repository.LoginAttemptRepository) *PhishingServic
 	return &PhishingService{Repo: repo}
 }
 
-func (s *PhishingService) DetectPhishing(ctx context.Context, attempt *models.LoginAttempt) {
-	tx := s.Repo.DB.Begin()
+type BehavioralStats struct {
+	AvgLoginInterval   float64
+	StdDevInterval     float64
+	MostCommonLocation string
+	MostCommonDevice   string
+}
 
+func (s *PhishingService) DetectPhishing(ctx context.Context, attempt *models.LoginAttempt) error {
+	tx := s.Repo.DB.Begin()
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
-			log.Printf("Panic recovered in DetectPhishing for user %s: %v", attempt.UserID, r)
+			log.Printf("[ERROR] Panic recovered in DetectPhishing for user %s: %v", attempt.UserID, r)
 		}
 	}()
 
 	// Fetch login history
 	history, err := s.Repo.GetLastLogin(ctx, attempt.UserID, 50)
 	if err != nil {
-		log.Printf("Error fetching login history for user %s: %v", attempt.UserID, err)
+		log.Printf("[ERROR] Failed to fetch login history for user %s: %v", attempt.UserID, err)
 		tx.Rollback()
-		return
+		return fmt.Errorf("error fetching login history: %w", err)
 	}
 
 	var lastLogin *models.LoginAttempt
@@ -44,201 +50,225 @@ func (s *PhishingService) DetectPhishing(ctx context.Context, attempt *models.Lo
 		lastLogin = history[0] // Most recent login
 	}
 
-	// Compute behavioral baselines
-	behavioralStats, commonPatterns := CalculateBehavioralBaselines(history)
+	// Compute behavioral stats
+	behavioralStats := CalculateBehavioralStats(history)
 
-	// Compute risk score based on various heuristics
-	riskScore, alertMessages := ComputeRiskScore(attempt, lastLogin, behavioralStats, commonPatterns)
+	// Compute risk score based on heuristics
+	riskScore, alertMessages, err := ComputeRiskScore(attempt, lastLogin, behavioralStats)
+	if err != nil {
+		log.Printf("[ERROR] Failed to compute risk score for user %s: %v", attempt.UserID, err)
+		tx.Rollback()
+		return err
+	}
 
-	// Parallel network-based heuristics
-	riskScore += s.PerformNetworkAnalysis(ctx, attempt, &alertMessages)
+	// Perform additional network-based heuristics in parallel
+	networkRisk, networkAnalysisResult, err := s.PerformNetworkAnalysis(ctx, attempt, &alertMessages)
+	if err != nil {
+		log.Printf("[ERROR] Network analysis failed for user %s: %v", attempt.UserID, err)
+		tx.Rollback()
+		return err
+	}
+	riskScore += networkRisk
 
-	// Trigger Alerts if Necessary
+	attempt.RiskScore = riskScore
+	attempt.MultipleIPsDetected = networkAnalysisResult.UniqueIPCount > 2
+	attempt.LoginFrequencyHigh = networkAnalysisResult.LoginCount > 5
+
+	log.Printf("[RISK SCORE]  %s: %d", attempt.UserID, riskScore)
+
+	// Trigger alerts if necessary
 	if riskScore > 75 {
 		attempt.IsPhishingRisk = true
-		SendSecurityAlerts(attempt, riskScore, alertMessages)
+		err := SendSecurityAlerts(attempt, riskScore, alertMessages)
+		if err != nil {
+			log.Printf("[ERROR] Failed to send security alerts for user %s: %v", attempt.UserID, err)
+		}
 	}
 
-	// Save Login Attempt Safely
+	// Save login attempt
 	if err := tx.Create(attempt).Error; err != nil {
-		log.Printf("Error saving login attempt for user %s: %v", attempt.UserID, err)
+		log.Printf("[ERROR] Failed to save login attempt for user %s: %v", attempt.UserID, err)
 		tx.Rollback()
-		return
+		return fmt.Errorf("error saving login attempt: %w", err)
 	}
 
+	// Commit transaction safely
 	if err := tx.Commit().Error; err != nil {
-		log.Printf("Transaction commit error for user %s: %v", attempt.UserID, err)
+		log.Printf("[ERROR] Transaction commit failed for user %s: %v", attempt.UserID, err)
 		tx.Rollback()
+		return fmt.Errorf("transaction commit error: %w", err)
 	}
+
+	return nil
 }
 
-func CalculateBehavioralBaselines(logins []*models.LoginAttempt) (map[string]float64, map[string]string) {
-	behavioralStats := make(map[string]float64)
-	commonPatterns := make(map[string]string)
-
+func CalculateBehavioralStats(logins []*models.LoginAttempt) *BehavioralStats {
 	if len(logins) == 0 {
-		// Return default values if there's no login history
-		behavioralStats["average_login_interval"] = 0
-		behavioralStats["std_dev_login_interval"] = 0
-		commonPatterns["most_common_location"] = ""
-		commonPatterns["most_common_device"] = ""
-		return behavioralStats, commonPatterns
+		return &BehavioralStats{}
 	}
 
-	var totalTime float64
 	var timeIntervals []float64
 	locationCounts := make(map[string]int)
 	deviceCounts := make(map[string]int)
 
-	// Iterate over login history to compute intervals and common patterns
 	for i := 1; i < len(logins); i++ {
 		timeDiff := logins[i-1].CreatedAt.Sub(logins[i].CreatedAt).Seconds()
 		timeIntervals = append(timeIntervals, timeDiff)
-		totalTime += timeDiff
-
 		locationCounts[logins[i].Location]++
 		deviceCounts[logins[i].DeviceID]++
 	}
 
-	// Compute average login interval
-	averageInterval := totalTime / float64(len(timeIntervals))
-	behavioralStats["average_login_interval"] = averageInterval
-
-	// Compute standard deviation of login intervals (for proper Z-score)
-	behavioralStats["std_dev_login_interval"] = calculateStandardDeviation(timeIntervals, averageInterval)
-
-	// Find most common location & device
-	commonPatterns["most_common_location"] = getMostCommonKey(locationCounts)
-	commonPatterns["most_common_device"] = getMostCommonKey(deviceCounts)
-
-	return behavioralStats, commonPatterns
+	return &BehavioralStats{
+		AvgLoginInterval:   utils.Mean(timeIntervals),
+		StdDevInterval:     utils.StandardDeviation(timeIntervals),
+		MostCommonLocation: utils.MostCommonKey(locationCounts),
+		MostCommonDevice:   utils.MostCommonKey(deviceCounts),
+	}
 }
 
-// Function: Compute Standard Deviation
-func calculateStandardDeviation(data []float64, mean float64) float64 {
-	if len(data) == 0 {
-		return 0
-	}
-	var sumSquaredDiffs float64
-	for _, value := range data {
-		sumSquaredDiffs += math.Pow(value-mean, 2)
-	}
-	return math.Sqrt(sumSquaredDiffs / float64(len(data)))
-}
-
-// Helper Function: Get Most Common Key from a Map
-func getMostCommonKey(counts map[string]int) string {
-	maxCount := 0
-	mostCommon := ""
-	for key, count := range counts {
-		if count > maxCount {
-			maxCount = count
-			mostCommon = key
-		}
-	}
-	return mostCommon
-}
-
-// Compute Risk Score based on login behavior
-func ComputeRiskScore(attempt *models.LoginAttempt, lastLogin *models.LoginAttempt, behavioralStats map[string]float64, commonPatterns map[string]string) (int, []string) {
+func ComputeRiskScore(attempt *models.LoginAttempt, lastLogin *models.LoginAttempt, stats *BehavioralStats) (int, []string, error) {
 	riskScore := 0
 	alertMessages := []string{}
 
-	if lastLogin != nil {
-		// **GeoIP Analysis**
-		if lastLogin.Location != attempt.Location {
-			distance, err := utils.CalculateGeoDistance(lastLogin.Location, attempt.Location)
-			if err == nil {
-				attempt.DistanceFromLast = distance
-				if distance > 5000 {
-					riskScore += 30
-					alertMessages = append(alertMessages, "Unusual location detected")
-				} else if distance > 1000 {
-					riskScore += 15
-				}
-			}
-		}
+	if lastLogin == nil {
+		return riskScore, alertMessages, nil
+	}
 
-		// **OTP Replay Attack**
-		if lastLogin.OTPCodeHash == attempt.OTPCodeHash {
-			attempt.OTPReplayDetected = true
-			riskScore += 40
-			alertMessages = append(alertMessages, "OTP replay detected")
+	distance, err := utils.CalculateGeoDistance(lastLogin.Location, attempt.Location)
+	if err == nil {
+		attempt.DistanceFromLast = distance
+		if distance > 5000 {
+			riskScore += 30
+			alertMessages = append(alertMessages, "Unusual location detected")
+		} else if distance > 1000 {
+			riskScore += 15
 		}
+	} else {
+		log.Printf("[WARN] Failed to calculate geo distance: %v", err)
+	}
 
-		// **Device Mismatch**
-		if attempt.DeviceID != commonPatterns["most_common_device"] {
-			attempt.DeviceMismatch = true
-			riskScore += 25
-			alertMessages = append(alertMessages, "Login from a new device")
-		}
+	if lastLogin.OTPCodeHash == attempt.OTPCodeHash {
+		attempt.OTPReplayDetected = true
+		riskScore += 40
+		alertMessages = append(alertMessages, "OTP replay detected")
+	}
 
-		// **Time-Based Attack Detection**
-		if behavioralStats["average_login_interval"] > 0 {
-			timeDiff := time.Since(lastLogin.CreatedAt).Seconds()
-			zScore := (timeDiff - behavioralStats["average_login_interval"]) / behavioralStats["std_dev_login_interval"]
-			if zScore > 2.0 {
-				riskScore += 20
-				alertMessages = append(alertMessages, "Unusual login time detected")
-			}
+	if attempt.DeviceID != stats.MostCommonDevice {
+		attempt.DeviceMismatch = true
+		riskScore += 25
+		alertMessages = append(alertMessages, "Login from a new device")
+	}
+
+	if stats.AvgLoginInterval > 0 && stats.StdDevInterval > 0 {
+		timeDiff := time.Since(lastLogin.CreatedAt).Seconds()
+		zScore := (timeDiff - stats.AvgLoginInterval) / stats.StdDevInterval
+		if math.Abs(zScore) > 2.0 {
+			riskScore += 20
+			alertMessages = append(alertMessages, "Unusual login time detected")
 		}
 	}
 
-	return riskScore, alertMessages
+	return riskScore, alertMessages, nil
 }
 
-// Perform Network Analysis (Parallel)
-func (s *PhishingService) PerformNetworkAnalysis(ctx context.Context, attempt *models.LoginAttempt, alertMessages *[]string) int {
+func (s *PhishingService) PerformNetworkAnalysis(ctx context.Context, attempt *models.LoginAttempt, alertMessages *[]string) (int, *NetworkAnalysisResult, error) {
 	riskScore := 0
 	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var errList []error
+
+	result := &NetworkAnalysisResult{}
+
 	wg.Add(3)
 
-	// **High-Frequency Login Detection**
+	// High-Frequency Login Detection
 	go func() {
 		defer wg.Done()
-		loginCount, err := s.Repo.CountLoginsInLastHour(ctx, attempt.UserID)
-		if err == nil && loginCount > 5 {
+		count, err := s.Repo.CountLoginsInLastHour(ctx, attempt.UserID)
+		if err != nil {
+			mu.Lock()
+			errList = append(errList, err)
+			mu.Unlock()
+			return
+		}
+		mu.Lock()
+		result.LoginCount = count
+		if result.LoginCount > 5 {
 			riskScore += 20
 			*alertMessages = append(*alertMessages, "High login frequency detected")
 		}
+		mu.Unlock()
 	}()
 
-	// **Multiple IPs in Short Duration**
+	// Multiple IPs in Short Duration
 	go func() {
 		defer wg.Done()
-		uniqueIPCount, err := s.Repo.CountUniqueIPsInLastHour(ctx, attempt.UserID)
-		if err == nil && uniqueIPCount > 2 {
+		count, err := s.Repo.CountUniqueIPsInLastHour(ctx, attempt.UserID)
+		if err != nil {
+			mu.Lock()
+			errList = append(errList, err)
+			mu.Unlock()
+			return
+		}
+		mu.Lock()
+		result.UniqueIPCount = count
+		if result.UniqueIPCount > 2 {
 			riskScore += 20
 			*alertMessages = append(*alertMessages, "Multiple IPs detected")
 		}
+		mu.Unlock()
 	}()
 
-	// **Network Reputation Analysis**
+	// Network Reputation Analysis
 	go func() {
 		defer wg.Done()
-		if utils.CheckIPReputation(attempt.IPAddress) == "malicious" {
+		reputation := utils.CheckIPReputation(attempt.IPAddress)
+		mu.Lock()
+		result.IPReputation = reputation
+		if reputation == "malicious" {
 			riskScore += 50
 			*alertMessages = append(*alertMessages, "IP flagged as malicious")
 		}
-		if utils.IsVPN(attempt.IPAddress) {
-			riskScore += 15
-			*alertMessages = append(*alertMessages, "VPN detected")
-		}
-		if utils.IsTorExitNode(attempt.IPAddress) {
-			riskScore += 30
-			*alertMessages = append(*alertMessages, "Tor network detected")
-		}
+		mu.Unlock()
 	}()
 
 	wg.Wait()
-	return riskScore
+
+	if len(errList) > 0 {
+		return riskScore, result, fmt.Errorf("network analysis errors: %v", errList)
+	}
+
+	return riskScore, result, nil
 }
 
-// Send Security Alerts
-func SendSecurityAlerts(attempt *models.LoginAttempt, riskScore int, alertMessages []string) {
-	alertMessage := fmt.Sprintf("**Phishing Alert!** User: %s, IP: %s, Device: %s, Location: %s.\n🔹 Risk Score: %d\n🔹 Issues: %v",
-		attempt.UserID, attempt.IPAddress, attempt.DeviceID, attempt.Location, riskScore, alertMessages)
+type NetworkAnalysisResult struct {
+	LoginCount    int64
+	UniqueIPCount int64
+	IPReputation  string
+}
 
-	go utils.SendSlackAlert(alertMessage)
-	go utils.SendEmailAlert("Security Alert", alertMessage)
+func SendSecurityAlerts(attempt *models.LoginAttempt, riskScore int, alertMessages []string) error {
+	alertMessage := fmt.Sprintf(`Dear User,
+
+		We detected suspicious login activity on your account. Below are the details:
+		User ID: %s  
+		Login Attempt Time: %s  
+		IP Address: %s  
+		Geo-location: %s  
+		Device Info: %s  
+		Risk Level: High  
+		Reason: %s  
+
+		If this was not you, please reset your password immediately.
+
+		Security Team`,
+		attempt.UserID,
+		attempt.CreatedAt.Format("2006-01-02 15:04:05 MST"),
+		attempt.IPAddress,
+		attempt.Location,
+		attempt.DeviceID,
+		alertMessages,
+	)
+	err := utils.SendEmailAlert("lokoc2623@gmail.com", alertMessage)
+	return err
 }

@@ -24,7 +24,6 @@ func (h *LoginHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var attempt models.LoginAttempt
 
-	// Decode JSON payload
 	if err := json.NewDecoder(r.Body).Decode(&attempt); err != nil {
 		http.Error(w, "Invalid JSON request", http.StatusBadRequest)
 		log.Println("[ERROR] JSON decoding failed:", err)

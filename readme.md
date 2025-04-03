@@ -19,7 +19,7 @@ The system integrates **GORM with MySQL**, employs **concurrent risk analysis**,
 
 ## **Architecture**  
 
-### **1️⃣ Behavioral Analysis Flow**  
+### ** Behavioral Analysis Flow**  
 ![screenshot](algorithm-flow.png)
 
 
@@ -44,18 +44,18 @@ The system integrates **GORM with MySQL**, employs **concurrent risk analysis**,
 - **Go 1.23**  
 - **MySQL** (for storing login attempts)  
 
-### **1️⃣ Clone the Repository**  
+### ** Clone the Repository**  
 ```sh
 git clone https://github.com/yourusername/phishing-detection.git
 cd phishing-detection
 ```
 
-### **2️⃣ Install Dependencies**  
+### ** Install Dependencies**  
 ```sh
 go mod tidy
 ```
 
-### **3️⃣ Configure Environment Variables**  
+### ** Configure Environment Variables**  
 Create a `.env` file:  
 ```env
 DB_USER=root
@@ -65,7 +65,7 @@ DB_NAME=phishing_detection
 
 ```
 
-### **4️⃣ Run the Service**  
+### ** Run the Service**  
 ```sh
 go run main.go
 ```

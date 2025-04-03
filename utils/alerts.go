@@ -30,10 +30,11 @@ func SendSlackAlert(message string) error {
 }
 
 func SendEmailAlert(to, message string) error {
+	
 	smtpHost := os.Getenv("SMTP_HOST")
 	smtpPort := os.Getenv("SMTP_PORT")
 	smtpUser := os.Getenv("SMTP_USER")
-	smtpPass := os.Getenv("SMTP_PASSWORD")
+	smtpPass := os.Getenv("SMTP_PASS")
 
 	if smtpHost == "" || smtpPort == "" || smtpUser == "" || smtpPass == "" {
 		return fmt.Errorf("SMTP configuration is incomplete")

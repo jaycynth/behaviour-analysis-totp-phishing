@@ -5,7 +5,7 @@ import "time"
 type DeviceMetadata struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
 	UserID    string    `gorm:"index;not null" json:"user_id"`
-	DeviceID  string    `gorm:"index;not null" json:"device_id"`
+	DeviceID  string    `gorm:"index;not null;unique" json:"device_id"`
 	OSVersion string    `json:"os_version"`
 	UserAgent string    `json:"user_agent"`
 	PublicIP  string    `json:"public_ip"`

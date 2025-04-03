@@ -2,9 +2,9 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
-	"strconv"
 	"time"
 
 	"github.com/jaycynth/behaviour-analysis-totp-phishing/models"
@@ -62,7 +62,6 @@ func (r *LoginAttemptRepository) UpdateLoginCache(ctx context.Context, userID st
 	_, _ = pipe.Exec(ctx)
 }
 
-// Get Last Login
 func (r *LoginAttemptRepository) GetLastLogin(ctx context.Context, userID string, limit ...int32) ([]*models.LoginAttempt, error) {
 	if userID == "" {
 		return nil, errors.New("user ID cannot be empty")
@@ -74,8 +73,20 @@ func (r *LoginAttemptRepository) GetLastLogin(ctx context.Context, userID string
 		defaultLimit = limit[0]
 	}
 
+	cacheKey := "last_login:" + userID
+
 	var lastLogins []*models.LoginAttempt
-	err := r.DB.WithContext(ctx).
+
+	// Attempt to fetch from Redis
+	cachedData, err := r.Redis.Get(ctx, cacheKey).Result()
+	if err == nil {
+		if err := json.Unmarshal([]byte(cachedData), &lastLogins); err == nil {
+			return lastLogins, nil
+		}
+	}
+
+	// Cache Miss → Fetch from Database
+	err = r.DB.WithContext(ctx).
 		Where("user_id = ?", userID).
 		Order("created_at DESC").
 		Limit(int(defaultLimit)).
@@ -84,41 +95,25 @@ func (r *LoginAttemptRepository) GetLastLogin(ctx context.Context, userID string
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		log.Printf("no login attempts found for user %s", userID)
 		return nil, nil
+	} else if err != nil {
+		return nil, err
 	}
-	return lastLogins, err
+
+	cacheData, err := json.Marshal(lastLogins)
+	if err == nil {
+		_ = r.Redis.Set(ctx, cacheKey, cacheData, 10*time.Minute).Err()
+	}
+
+	return lastLogins, nil
 }
 
-// Count Logins in Last Hour
 func (r *LoginAttemptRepository) CountLoginsInLastHour(ctx context.Context, userID string) (int64, error) {
 	if userID == "" {
 		return 0, errors.New("user ID cannot be empty")
 	}
 
-	mainCacheKey := "logins:last_60m:" + userID
-	backupCacheKey := "logins:last_30m:" + userID
 	var count int64
 
-	// Use Redis Pipelining for Faster Cache Fetching
-	pipe := r.Redis.Pipeline()
-	mainCache := pipe.Get(ctx, mainCacheKey)
-	backupCache := pipe.Get(ctx, backupCacheKey)
-	_, _ = pipe.Exec(ctx)
-
-	// Check Main Cache
-	if mainCount, err := mainCache.Result(); err == nil {
-		if parsed, err := strconv.ParseInt(mainCount, 10, 64); err == nil {
-			return parsed, nil
-		}
-	}
-
-	// Check Backup Cache
-	if backupCount, err := backupCache.Result(); err == nil {
-		if parsed, err := strconv.ParseInt(backupCount, 10, 64); err == nil {
-			return parsed, nil
-		}
-	}
-
-	// Cache Miss → Fetch from Database
 	if err := r.DB.WithContext(ctx).
 		Model(&models.LoginAttempt{}).
 		Where("user_id = ? AND created_at >= ?", userID, time.Now().UTC().Add(-1*time.Hour)).
@@ -126,31 +121,16 @@ func (r *LoginAttemptRepository) CountLoginsInLastHour(ctx context.Context, user
 		return 0, err
 	}
 
-	// Store in Redis Cache (Atomic)
-	pipe.Set(ctx, mainCacheKey, count, time.Hour)
-	pipe.Set(ctx, backupCacheKey, count, 30*time.Minute)
-	_, _ = pipe.Exec(ctx)
-
 	return count, nil
 }
 
-// Count Unique IPs in Last Hour (Prevents SQL Injection)
 func (r *LoginAttemptRepository) CountUniqueIPsInLastHour(ctx context.Context, userID string) (int64, error) {
 	if userID == "" {
 		return 0, errors.New("user ID cannot be empty")
 	}
 
-	cacheKey := "unique_ips:last_hour:" + userID
 	var count int64
 
-	// Check Redis First
-	if cachedCount, err := r.Redis.Get(ctx, cacheKey).Result(); err == nil {
-		if parsed, err := strconv.ParseInt(cachedCount, 10, 64); err == nil {
-			return parsed, nil
-		}
-	}
-
-	// Cache Miss → Fetch from Database
 	err := r.DB.WithContext(ctx).
 		Model(&models.LoginAttempt{}).
 		Where("user_id = ? AND created_at >= ?", userID, time.Now().UTC().Add(-1*time.Hour)).
@@ -161,7 +141,5 @@ func (r *LoginAttemptRepository) CountUniqueIPsInLastHour(ctx context.Context, u
 		return 0, err
 	}
 
-	// Store in Redis
-	_ = r.Redis.Set(ctx, cacheKey, count, time.Hour).Err()
 	return count, nil
 }

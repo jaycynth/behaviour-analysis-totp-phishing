@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
-	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/jaycynth/behaviour-analysis-totp-phishing/models"
@@ -27,25 +27,32 @@ func (h *DeviceHandler) HandleSyncDevice(w http.ResponseWriter, r *http.Request)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&metadata); err != nil {
-		fmt.Printf("Error decoding JSON: %v\n", err)
+		log.Printf("Error decoding JSON: %v", err)
 		http.Error(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
 
 	// Validate required fields in metadata
 	if metadata.DeviceID == "" {
+		log.Println("Validation error: Missing required fields in metadata")
 		http.Error(w, "Missing required fields", http.StatusBadRequest)
 		return
 	}
 
-	// Call service to sync metadata
-	if err := h.service.SyncDeviceMetadata(&metadata); err != nil {
+	log.Printf("Starting to sync device metadata for DeviceID: %s", metadata.DeviceID)
+
+	if _, err := h.service.SyncDeviceMetadata(&metadata); err != nil {
+		log.Printf("Error syncing device metadata for DeviceID %s: %v", metadata.DeviceID, err)
 		http.Error(w, "Failed to sync device", http.StatusInternalServerError)
 		return
 	}
 
-	// Respond with success
+	log.Printf("Successfully synced device metadata for DeviceID: %s", metadata.DeviceID)
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"message": "Device synced successfully"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"message": "Device synced successfully"}); err != nil {
+		log.Printf("Error encoding response: %v", err)
+		http.Error(w, "Failed to send response", http.StatusInternalServerError)
+	}
 }

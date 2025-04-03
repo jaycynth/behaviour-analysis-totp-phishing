@@ -14,7 +14,7 @@ func NewDeviceService(repo repository.DeviceRepository) *DeviceService {
 	return &DeviceService{repo: repo}
 }
 
-func (s *DeviceService) SyncDeviceMetadata(metadata *models.DeviceMetadata) error {
+func (s *DeviceService) SyncDeviceMetadata(metadata *models.DeviceMetadata) (*models.DeviceMetadata, error) {
 	return s.repo.SaveDeviceMetadata(metadata)
 }
 

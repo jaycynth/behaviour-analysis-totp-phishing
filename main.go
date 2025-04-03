@@ -58,7 +58,7 @@ func main() {
 
 	// Define routes
 	apiRouter := router.PathPrefix("/api").Subrouter()
-	apiRouter.HandleFunc("/login", loginHandler.HandleLogin).Methods(http.MethodPost)
+	apiRouter.HandleFunc("/login-attempt", loginHandler.HandleLogin).Methods(http.MethodPost)
 	apiRouter.HandleFunc("/sync-device", deviceHandler.HandleSyncDevice).Methods(http.MethodPost)
 
 	// Start server
